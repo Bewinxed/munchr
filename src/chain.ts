@@ -13,6 +13,8 @@ import type {
   ChunkConfig,
   Extraction,
   ExtractConfig,
+  ExtractMarkdownConfig,
+  ExtractSchemaConfig,
   InputData,
   InputOptions,
   MergeConfig,
@@ -59,6 +61,8 @@ export class Normalized {
     return new Chunked(this.normalizeConfig, config ?? {});
   }
 
+  extract(config: ExtractMarkdownConfig): Extracted<string>;
+  extract<T>(config: ExtractSchemaConfig<T>): Extracted<T>;
   extract<T>(config: ExtractConfig<T>): Extracted<T> {
     return new Extracted(this.normalizeConfig, undefined, config);
   }
@@ -77,6 +81,8 @@ export class Chunked {
     this.chunkConfig = chunkConfig;
   }
 
+  extract(config: ExtractMarkdownConfig): Extracted<string>;
+  extract<T>(config: ExtractSchemaConfig<T>): Extracted<T>;
   extract<T>(config: ExtractConfig<T>): Extracted<T> {
     return new Extracted(this.normalizeConfig, this.chunkConfig, config);
   }

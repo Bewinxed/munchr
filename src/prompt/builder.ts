@@ -58,7 +58,11 @@ export class PromptBuilder {
 
     // 5. Extraction instruction
     parts.push('');
-    parts.push('Extract the data according to the schema.');
+    if (config.output === 'markdown') {
+      parts.push('Convert the document content above into clean, well-structured markdown.');
+    } else {
+      parts.push('Extract the data according to the schema.');
+    }
 
     // Update previous chunk for this document
     this.prevChunkByDoc.set(docKey, chunk.text);

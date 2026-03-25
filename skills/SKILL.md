@@ -1,12 +1,21 @@
 ---
 name: munchr
 description: |
-  How to build document extraction pipelines with the munchr library. Use this skill whenever the user works with munchr, imports from 'munchr' or 'munchr/backends' or 'munchr/steps', wants to extract structured data from documents (PDFs, images, CSVs, HTML, XLSX, DOCX, emails), sets up OCR pipelines, or configures LLM-based extraction with schemas. Also trigger when you see the normalize/chunk/extract/merge pipeline pattern, or when someone asks about streaming structured JSON from documents.
+  How to build document extraction pipelines with the munchr library. Use this skill whenever the user works with munchr, imports from 'munchr' or 'munchr/backends' or 'munchr/steps', wants to extract structured data or markdown from documents (PDFs, images, CSVs, HTML, XLSX, DOCX, emails), sets up OCR pipelines, or configures LLM-based extraction with schemas. Also trigger when you see the normalize/chunk/extract/merge pipeline pattern, or when someone asks about streaming structured JSON or markdown from documents.
 ---
 
 # munchr
 
-munchr turns any document into typed structured data through a fluent pipeline. The key design insight: every document extraction problem is a sequence of **normalize → chunk → extract → merge**, and the user only configures the steps relevant to their use case.
+munchr turns any document into typed structured data or clean markdown through a fluent pipeline. The key design insight: every document extraction problem is a sequence of **normalize → chunk → extract → merge**, and the user only configures the steps relevant to their use case.
+
+## Output modes
+
+munchr supports two output modes via the `extract()` step, controlled by the `output` discriminant:
+
+- **`output: 'schema'`** — Structured JSON extraction. Requires a schema (Valibot, Zod, ArkType). Uses AI SDK `streamObject()`. Returns typed `T`.
+- **`output: 'markdown'`** — LLM-enhanced markdown conversion. No schema needed. Uses AI SDK `streamText()`. Returns `string`.
+
+Both modes stream progressively and work with the full pipeline (normalize → chunk → extract → merge).
 
 ## How to think about a user's extraction problem
 
@@ -24,7 +33,13 @@ This determines whether you need OCR and which path to take.
 
 Guide the user toward VLM mode for single-page visual documents (receipts, single invoices, ID cards) and pipeline mode for multi-page scanned documents (bank statements, contracts).
 
-### 2. Does the text exceed the LLM's effective context?
+### 2. What output does the user need?
+
+**Structured data** (JSON matching a schema) → `output: 'schema'`. The user must provide a schema. This is the primary use case for data extraction, form parsing, invoice processing, etc.
+
+**Clean markdown** → `output: 'markdown'`. No schema needed. The LLM converts/cleans the normalized text into well-structured markdown. Use for document conversion, content migration, OCR cleanup, or when the user wants readable text output rather than structured fields.
+
+### 3. Does the text exceed the LLM's effective context?
 
 If yes, the user needs chunking. Pick the strategy based on the document's structure, not its format:
 
@@ -35,7 +50,7 @@ If yes, the user needs chunking. Pick the strategy based on the document's struc
 
 If the document fits in context, skip `.chunk()` entirely.
 
-### 3. What does the output schema look like?
+### 4. What does the output schema look like? (schema mode only)
 
 Help the user design a schema that reflects how data actually appears in the document. The schema is both the extraction target AND the validation gate — if the LLM output doesn't match, that chunk's extraction is discarded.
 
@@ -46,26 +61,47 @@ Key schema design principles:
 - For array extraction (transactions, line items, entities), the array goes inside the schema object — don't make the top-level schema an array
 - Keep schemas flat when possible — deeply nested schemas are harder for LLMs to populate correctly
 
-### 4. Do multiple chunks produce results that need combining?
+### 5. Do multiple chunks produce results that need combining?
 
-If yes, the user needs `.merge()`. The strategy depends on the schema shape:
+If yes, the user needs `.merge()`. The strategy depends on the output mode and schema shape:
 
+**For schema mode:**
 - **Array data** (transactions, line items, entities) → `'concat'` or `'dedupe'`. Concat is the default — it appends arrays from each chunk. If chunks overlap (sliding window) or multi-pass is used, use `'dedupe'` with a key function that uniquely identifies each item.
 - **Scalar data** (single vendor name, total amount) → `'concat'` works — it uses the first non-null value for scalars.
 - **Complex merging logic** → pass a custom function: `.merge({ strategy: (extractions) => myMerge(extractions) })`
+
+**For markdown mode:**
+- The default `'concat'` strategy joins markdown strings with `\n\n---\n\n` separators between chunks.
+- `'first'` returns only the first chunk's markdown.
 
 ## Constructing pipelines
 
 Always construct the pipeline as a reusable chain, then call `.run()` or `.stream()` on it:
 
+### Schema mode (structured JSON)
+
 ```typescript
-// Define once — nothing executes yet
+import { normalize } from 'munchr';
+import { mineruBackend } from 'munchr/backends';
+import { openai } from '@ai-sdk/openai';
+import * as v from 'valibot';
+
+const TransactionSchema = v.object({
+  transactions: v.array(v.object({
+    date: v.string(),
+    description: v.string(),
+    amount: v.number(),
+    type: v.picklist(['debit', 'credit']),
+  })),
+});
+
 const pipeline = normalize({ ocr: mineruBackend({ url: 'http://localhost:8888' }) })
   .chunk({ strategy: 'row', maxChars: 8000, contextWindow: 500 })
   .extract({
+    output: 'schema',
     model: openai('gpt-4o'),
     schema: TransactionSchema,
-    prompt: 'Extract all bank transactions. Include date, description, amount, and balance.',
+    prompt: 'Extract all bank transactions. Include date, description, amount, and type.',
     concurrency: 3,
     onChunkError: 'skip',
   })
@@ -74,57 +110,66 @@ const pipeline = normalize({ ocr: mineruBackend({ url: 'http://localhost:8888' }
     dedupeKey: (tx) => `${tx.date}-${tx.amount}-${tx.description.slice(0, 20)}`,
   });
 
-// Execute — reusable across many documents
 const result = await pipeline.run(pdfBuffer);
-const result2 = await pipeline.run(anotherPdf, { filename: 'statement-feb.pdf' });
 ```
 
-For streaming (useful in UIs where you want progressive updates):
+### Markdown mode (document conversion)
+
 ```typescript
-for await (const event of pipeline.stream(pdfBuffer)) {
-  if (event.phase === 'extracting' && !event.done) {
-    updateUI(event.extraction); // partial object, fills in progressively
+import { normalize } from 'munchr';
+import { openai } from '@ai-sdk/openai';
+
+// Single-page document
+const md = await normalize({ ocr })
+  .extract({
+    output: 'markdown',
+    model: openai('gpt-4o-mini'),
+    prompt: 'Convert this document to clean markdown.',
+  })
+  .run(pdfBuffer);
+
+// Multi-page with chunking
+const md = await normalize({ ocr })
+  .chunk({ strategy: 'page' })
+  .extract({
+    output: 'markdown',
+    model: openai('gpt-4o-mini'),
+    prompt: 'Convert to well-structured markdown. Preserve tables and headings.',
+  })
+  .merge({ strategy: 'concat' })
+  .run(largePdf);
+
+// Streaming markdown
+for await (const event of normalize({ ocr })
+  .extract({ output: 'markdown', model, prompt: 'Convert to markdown.' })
+  .stream(pdfBuffer)) {
+  if (event.phase === 'extracting') {
+    process.stdout.write(event.extraction);
   }
 }
 ```
 
-## Worked example: reasoning through a user request
-
-**User says**: "I have a folder of scanned invoices (images), each is one page, and I need vendor, date, total, and line items from each."
-
-**Reasoning**:
-1. Input is images, single page each → VLM mode is simpler (no need for separate OCR + chunking)
-2. Single page → no chunking needed
-3. Schema: vendor (string), date (string), total (number), lineItems (array)
-4. No merging needed — one extraction per image
-5. They have multiple files → make a reusable pipeline, loop over files
+### VLM mode (vision model, both output modes)
 
 ```typescript
 import { extract } from 'munchr';
 import { openai } from '@ai-sdk/openai';
-import * as v from 'valibot';
 
-const InvoiceSchema = v.object({
-  vendor: v.string(),
-  date: v.string(),
-  total: v.number(),
-  lineItems: v.array(v.object({
-    description: v.string(),
-    amount: v.number(),
-    quantity: v.optional(v.number()),
-  })),
-});
-
-const invoicePipeline = extract({
+// VLM → structured JSON
+const data = await extract({
+  output: 'schema',
   visionModel: openai('gpt-4o'),
   schema: InvoiceSchema,
-  prompt: 'Extract invoice details including all line items.',
-});
+  prompt: 'Extract invoice details.',
+}).run(imageBuffer, { type: 'image' });
 
-for (const file of imageFiles) {
-  const result = await invoicePipeline.run(file);
-  console.log(result.vendor, result.total);
-}
+// VLM → markdown
+const md = await extract({
+  output: 'markdown',
+  model: openai('gpt-4o'),
+  visionModel: openai('gpt-4o'),
+  prompt: 'Convert this image to markdown.',
+}).run(imageBuffer, { type: 'image' });
 ```
 
 ## What to avoid
@@ -133,13 +178,15 @@ for (const file of imageFiles) {
 - **Don't use VLM mode for multi-page documents** — unless the model supports very large visual inputs. Use pipeline mode with OCR instead.
 - **Don't make the extraction prompt too vague** — "extract data" is worse than "extract all bank transactions including date, description, debit/credit amount, and running balance." Specificity drives extraction quality.
 - **Don't set `onChunkError: 'throw'` for production pipelines** — one malformed table on page 37 shouldn't kill a 50-page extraction. Use `'skip'` (default) and handle error events.
+- **Don't use `output: 'schema'` when the user just wants markdown** — it's slower and requires a schema. Use `output: 'markdown'` instead.
 
 ## Source code reference
 
 The library source is in `src/`. Read these files for implementation details:
-- `src/core/types.ts` — all TypeScript interfaces and config types
-- `src/core/chain.ts` — the fluent builder classes (Normalized, Chunked, Extracted, Merged)
+- `src/core/types.ts` — all TypeScript interfaces and config types (ExtractSchemaConfig, ExtractMarkdownConfig)
+- `src/chain.ts` — the fluent builder classes (Normalized, Chunked, Extracted, Merged)
 - `src/core/errors.ts` — error class hierarchy
+- `src/steps/extract.ts` — extraction step (branches on output mode: streamObject vs streamText)
 - `src/steps/` — step factory functions (normalize, chunk, extract, merge)
 - `src/chunking/` — chunking strategy implementations
 - `src/backends/mineru.ts` — MinerU OCR backend

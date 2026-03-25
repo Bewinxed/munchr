@@ -1,10 +1,12 @@
 /**
- * munchr — Any document + schema in, streamed structured JSON out.
+ * munchr — Any document + schema in, streamed structured JSON or markdown out.
  *
  * Every function serves double duty:
  * - normalize(config) → builder with .run() (standalone) AND .chunk()/.extract() (chain)
  * - chunk(blocks, config) → Chunk[] (standalone, sync)
  * - extract(config) → builder with .run()/.stream() (standalone) AND .merge() (chain)
+ *   - output: 'schema' → structured JSON via streamObject()
+ *   - output: 'markdown' → markdown string via streamText()
  * - merge(extractions, config) → T (standalone, sync)
  */
 
@@ -13,6 +15,8 @@ import type {
   ChunkConfig,
   Extraction,
   ExtractConfig,
+  ExtractMarkdownConfig,
+  ExtractSchemaConfig,
   MergeConfig,
   NormalizeConfig,
   TextBlock,
@@ -46,12 +50,14 @@ export function chunk(blocks: TextBlock[], config?: ChunkConfig): Chunk[] {
 }
 
 /**
- * Extract structured data from chunks or images.
+ * Extract structured data or markdown from chunks or images.
  *
- * Standalone: `await extract({ model, schema, prompt }).run(input)` → T
- * VLM mode: `await extract({ visionModel, schema, prompt }).run(imageBuffer)` → T
- * Chain: `extract({ model, schema, prompt }).merge(...).run(input)` → T
+ * Schema mode: `await extract({ output: 'schema', model, schema, prompt }).run(input)` → T
+ * Markdown mode: `await extract({ output: 'markdown', model, prompt }).run(input)` → string
+ * VLM mode: `await extract({ output: 'schema', visionModel, schema, prompt }).run(imageBuffer)` → T
  */
+export function extract(config: ExtractMarkdownConfig): Extracted<string>;
+export function extract<T>(config: ExtractSchemaConfig<T>): Extracted<T>;
 export function extract<T>(config: ExtractConfig<T>): Extracted<T> {
   return new Extracted<T>(undefined, undefined, config);
 }
@@ -86,6 +92,9 @@ export type {
   ChunkConfig,
   ChunkStrategy,
   ExtractConfig,
+  ExtractSchemaConfig,
+  ExtractMarkdownConfig,
+  OutputMode,
   MergeConfig,
 } from './core/types.js';
 

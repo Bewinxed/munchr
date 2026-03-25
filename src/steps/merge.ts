@@ -2,11 +2,16 @@ import type { Extraction, MergeConfig } from '../core/types.js';
 
 /**
  * Deep merge two values with concat-array semantics.
- * Arrays are concatenated, scalars use first non-null, objects are recursively merged.
+ * Strings are joined with separator, arrays concatenated, scalars first non-null, objects recursively merged.
  */
 function deepMerge(a: any, b: any): any {
   if (a == null) return b;
   if (b == null) return a;
+
+  // Strings: join with markdown section separator (supports markdown concat)
+  if (typeof a === 'string' && typeof b === 'string') {
+    return a + '\n\n---\n\n' + b;
+  }
 
   if (Array.isArray(a) && Array.isArray(b)) {
     return [...a, ...b];

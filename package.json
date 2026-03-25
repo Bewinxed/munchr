@@ -1,6 +1,6 @@
 {
   "name": "munchr",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Any document + schema in, streamed structured JSON out.",
   "license": "MIT",
   "repository": {
@@ -8,7 +8,8 @@
     "url": "https://github.com/Bewinxed/munchr"
   },
   "files": [
-    "dist"
+    "dist",
+    "skills"
   ],
   "type": "module",
   "main": "./dist/index.js",

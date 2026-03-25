@@ -6,7 +6,8 @@ Quick lookup for type signatures. For behavioral guidance, see the main SKILL.md
 
 ```typescript
 normalize(config?: NormalizeConfig): Normalized        // → .chunk(), .extract()
-extract<T>(config: ExtractConfig<T>): Extracted<T>     // → .merge(), .run(), .stream()
+extract(config: ExtractMarkdownConfig): Extracted<string>  // markdown mode
+extract<T>(config: ExtractSchemaConfig<T>): Extracted<T>   // schema mode
 ```
 
 ## Config Interfaces
@@ -27,10 +28,16 @@ interface ChunkConfig {
   contextWindow?: number;                   // Default: 500
   overlap?: number;                         // 'sliding' only. Default: 200
 }
+```
 
-interface ExtractConfig<T> {
+### ExtractConfig (discriminated union)
+
+```typescript
+type OutputMode = 'schema' | 'markdown';
+
+// Base fields shared by both modes
+interface ExtractConfigBase {
   model: LanguageModel;
-  schema: StandardSchemaV1<unknown, T>;
   prompt: string;
   visionModel?: LanguageModel;
   examples?: Array<{ input: string; output: unknown }>;
@@ -41,12 +48,31 @@ interface ExtractConfig<T> {
   generationOptions?: Record<string, unknown>;
 }
 
+// Schema mode: structured JSON output
+interface ExtractSchemaConfig<T> extends ExtractConfigBase {
+  output: 'schema';
+  schema: StandardSchemaV1<unknown, T>;     // Valibot, Zod, ArkType, etc.
+}
+
+// Markdown mode: string output
+interface ExtractMarkdownConfig extends ExtractConfigBase {
+  output: 'markdown';
+}
+
+type ExtractConfig<T> = ExtractSchemaConfig<T> | ExtractMarkdownConfig;
+```
+
+### MergeConfig
+
+```typescript
 interface MergeConfig<T> {
   strategy?: 'concat' | 'first' | 'dedupe' | ((extractions: Extraction<T>[]) => T);  // Default: 'concat'
   dedupeKey?: (item: any) => string;
   dedupeWinner?: 'first' | 'last';         // Default: 'first'
 }
 ```
+
+Note: In markdown mode (`T = string`), the `'concat'` strategy joins strings with `\n\n---\n\n`.
 
 ## Data Types
 
@@ -82,6 +108,8 @@ type PipelineEvent<T> =
   | { phase: 'error'; error: Error; chunk?: Chunk; source: string };
 ```
 
+When `output: 'markdown'`, `T = string` and `extraction` is the accumulated markdown string so far.
+
 ## Errors
 
 ```typescript
@@ -103,15 +131,4 @@ interface OcrBackend {
   parse(input: Buffer | ReadableStream, options?: OcrOptions): Promise<string>;
   name: string;
 }
-```
-
-## Standalone Steps
-
-```typescript
-import { normalizeStep, chunkStep, extractStep, mergeStep } from 'munchr/steps';
-
-normalizeStep(input, options?, config)     // async generator → TextBlock
-chunkStep(blocks, config)                  // sync → Chunk[]
-extractStep(chunks, config)                // async generator → PipelineEvent<T>
-mergeStep(extractions, config)             // sync → T
 ```

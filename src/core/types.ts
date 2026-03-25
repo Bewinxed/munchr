@@ -148,11 +148,11 @@ export interface ChunkConfig {
   overlap?: number;
 }
 
-export interface ExtractConfig<T = unknown> {
+export type OutputMode = 'schema' | 'markdown';
+
+interface ExtractConfigBase {
   /** AI SDK model for text-based extraction. */
   model: LanguageModel;
-  /** The output schema. Any Standard Schema-compatible library (Valibot, Zod, ArkType, etc.). */
-  schema: StandardSchemaV1<unknown, T>;
   /** Extraction instructions / prompt. */
   prompt: string;
   /** Vision-capable model for end-to-end VLM extraction. */
@@ -173,6 +173,18 @@ export interface ExtractConfig<T = unknown> {
   /** AI SDK generation options (temperature, maxTokens, etc.). */
   generationOptions?: Record<string, unknown>;
 }
+
+export interface ExtractSchemaConfig<T = unknown> extends ExtractConfigBase {
+  output: 'schema';
+  /** The output schema. Any Standard Schema-compatible library (Valibot, Zod, ArkType, etc.). */
+  schema: StandardSchemaV1<unknown, T>;
+}
+
+export interface ExtractMarkdownConfig extends ExtractConfigBase {
+  output: 'markdown';
+}
+
+export type ExtractConfig<T = unknown> = ExtractSchemaConfig<T> | ExtractMarkdownConfig;
 
 export interface MergeConfig<T> {
   /** Merge strategy. Default: 'concat'. */

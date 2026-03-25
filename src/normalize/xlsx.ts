@@ -19,16 +19,22 @@ export async function normalizeXlsx(
     if (sheets === 'first' && sheetId > 1) return;
     if (Array.isArray(sheets) && !sheets.includes(sheetId)) return;
 
-    const rows: string[] = [];
+    const mdRows: string[] = [];
+    let isFirstRow = true;
+
     worksheet.eachRow((row) => {
       const cells = row.values as any[];
-      // row.values is 1-indexed, first element is undefined
       const values = cells.slice(1).map((v: any) => (v != null ? String(v) : ''));
-      rows.push(values.join(','));
+      mdRows.push('| ' + values.join(' | ') + ' |');
+
+      if (isFirstRow) {
+        mdRows.push('| ' + values.map(() => '---').join(' | ') + ' |');
+        isFirstRow = false;
+      }
     });
 
     blocks.push({
-      text: rows.join('\n'),
+      text: mdRows.join('\n'),
       source: { ...source, format: 'xlsx', sheet: worksheet.name },
       isVisual: false,
     });
