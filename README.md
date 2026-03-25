@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Bewinxed/munchr/main/assets/logo.png" alt="munchr" width="200" />
+  <img src="https://raw.githubusercontent.com/Bewinxed/munchr/main/assets/logo.png?v=2" alt="munchr" width="200" />
 </p>
 
 <h1 align="center">munchr</h1>
