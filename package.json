@@ -1,0 +1,58 @@
+{
+  "name": "munchr",
+  "version": "0.2.0",
+  "description": "Any document + schema in, streamed structured JSON out.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Bewinxed/munchr"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./backends": {
+      "import": "./dist/backends/index.js",
+      "types": "./dist/backends/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "check": "tsc --noEmit",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "^1.1.0",
+    "ai": "^6",
+    "exceljs": "^4",
+    "html-to-text": "^9",
+    "mailparser": "^3",
+    "mammoth": "^1",
+    "papaparse": "^5.5.3",
+    "unpdf": "^1.4.0"
+  },
+  "devDependencies": {
+    "@types/html-to-text": "^9",
+    "@types/mailparser": "^3",
+    "@types/node": "^25",
+    "@types/papaparse": "^5.5.2",
+    "lintcn": "^0.7.0",
+    "oxfmt": "latest",
+    "oxlint": "latest",
+    "tsup": "^8",
+    "typescript": "^5"
+  },
+  "peerDependencies": {},
+  "peerDependenciesMeta": {}
+}
