@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Any document + schema in, streamed structured JSON out.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Bewinxed/munchr"
+  },
   "files": [
     "dist"
   ],
@@ -18,10 +22,6 @@
     "./backends": {
       "import": "./dist/backends/index.js",
       "types": "./dist/backends/index.d.ts"
-    },
-    "./steps": {
-      "import": "./dist/steps/index.js",
-      "types": "./dist/steps/index.d.ts"
     }
   },
   "scripts": {

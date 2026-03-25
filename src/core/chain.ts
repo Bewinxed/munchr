@@ -36,6 +36,24 @@ export class Normalized {
     this.normalizeConfig = config;
   }
 
+  /**
+   * Standalone: normalize input and return all TextBlocks.
+   */
+  async run(input: InputData, options?: InputOptions): Promise<TextBlock[]> {
+    const blocks: TextBlock[] = [];
+    for await (const block of this.stream(input, options)) {
+      blocks.push(block);
+    }
+    return blocks;
+  }
+
+  /**
+   * Standalone: stream TextBlocks as they're produced.
+   */
+  async *stream(input: InputData, options?: InputOptions): AsyncGenerator<TextBlock> {
+    yield* normalizeStep(input, options, this.normalizeConfig);
+  }
+
   chunk(config?: ChunkConfig): Chunked {
     return new Chunked(this.normalizeConfig, config ?? {});
   }

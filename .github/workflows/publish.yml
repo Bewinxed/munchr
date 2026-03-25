@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
 
+permissions: {}
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -44,6 +46,10 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      - name: Ensure npm supports OIDC
+        if: steps.version.outputs.changed == 'true'
+        run: npm install -g npm@latest
+
       - name: Install and build
         if: steps.version.outputs.changed == 'true'
         run: |
@@ -61,8 +67,6 @@ jobs:
       - name: Publish to npm
         if: steps.version.outputs.changed == 'true'
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create git tag
         if: steps.version.outputs.changed == 'true'

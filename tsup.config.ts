@@ -4,7 +4,6 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'backends/index': 'src/backends/index.ts',
-    'steps/index': 'src/steps/index.ts',
   },
   format: ['esm'],
   dts: true,

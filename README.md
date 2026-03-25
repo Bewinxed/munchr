@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="munchr" width="200" />
+  <img src="https://raw.githubusercontent.com/Bewinxed/munchr/main/assets/logo.png" alt="munchr" width="200" />
 </p>
 
 <h1 align="center">munchr</h1>
@@ -268,29 +268,26 @@ const openRouter = openai('anthropic/claude-4-sonnet', {
 });
 ```
 
-## Standalone Steps
+## Standalone Usage
 
-Each step is also usable independently:
+Every function works independently — the same ones used internally by the chain:
 
 ```typescript
-import { normalizeStep, chunkStep, extractStep, mergeStep } from 'munchr/steps';
+import { normalize, chunk, extract, merge } from 'munchr';
 
 // Normalize any file to text
-const blocks = [];
-for await (const block of normalizeStep(fileBuffer, { type: 'pdf' }, { ocr })) {
-  blocks.push(block);
-}
+const blocks = await normalize({ ocr }).run(fileBuffer, { type: 'pdf' });
 
-// Chunk text blocks
-const chunks = chunkStep(blocks, { strategy: 'sentence', maxChars: 8000 });
+// Chunk text blocks (sync)
+const chunks = chunk(blocks, { strategy: 'sentence', maxChars: 8000 });
 
-// Extract from chunks
-for await (const event of extractStep(chunks, { model, schema, prompt })) {
+// Stream extraction from chunks
+for await (const event of extract({ model, schema, prompt }).stream(imageBuffer)) {
   console.log(event);
 }
 
-// Merge extractions
-const result = mergeStep(extractions, { strategy: 'concat' });
+// Merge extractions (sync)
+const result = merge(extractions, { strategy: 'concat' });
 ```
 
 ## Supported Formats
