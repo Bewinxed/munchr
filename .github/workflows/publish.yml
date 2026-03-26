@@ -14,7 +14,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 2
 
@@ -41,9 +41,10 @@ jobs:
 
       - name: Setup Node
         if: steps.version.outputs.changed == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install and build
         if: steps.version.outputs.changed == 'true'
@@ -59,9 +60,9 @@ jobs:
         if: steps.version.outputs.changed == 'true'
         run: bunx oxlint
 
-      - name: Publish to npm (OIDC provenance)
+      - name: Publish to npm
         if: steps.version.outputs.changed == 'true'
-        run: npm publish --provenance --access public
+        run: npm publish --access public
 
       - name: Create git tag
         if: steps.version.outputs.changed == 'true'
@@ -69,4 +70,3 @@ jobs:
           VERSION="v${{ steps.version.outputs.current }}"
           git tag "$VERSION"
           git push origin "$VERSION"
-
