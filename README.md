@@ -39,10 +39,12 @@ const result = await normalize()
     schema: v.object({
       vendor: v.string(),
       total: v.number(),
-      items: v.array(v.object({
-        description: v.string(),
-        amount: v.number(),
-      })),
+      items: v.array(
+        v.object({
+          description: v.string(),
+          amount: v.number(),
+        }),
+      ),
     }),
     prompt: 'Extract the receipt details.',
   })
@@ -103,29 +105,34 @@ Use `.stream()` instead of `.run()` to get events as they happen:
 ```typescript
 for await (const event of pipeline.stream(pdfBuffer)) {
   switch (event.phase) {
-    case 'normalizing': /* TextBlock emitted */     break;
-    case 'chunking':    /* Chunk emitted */          break;
-    case 'extracting':  /* Partial<T> streaming */   break;
-    case 'merging':     /* Final result */           break;
-    case 'error':       /* Per-chunk error */        break;
+    case 'normalizing':
+      /* TextBlock emitted */ break;
+    case 'chunking':
+      /* Chunk emitted */ break;
+    case 'extracting':
+      /* Partial<T> streaming */ break;
+    case 'merging':
+      /* Final result */ break;
+    case 'error':
+      /* Per-chunk error */ break;
   }
 }
 ```
 
 ## Supported formats
 
-| Format | How it normalizes |
-| --- | --- |
-| PDF (text) | Extracts embedded text via [unpdf](https://www.npmjs.com/package/unpdf) |
-| PDF (scanned) | Delegates to OCR backend |
-| Image | OCR backend or direct to vision model |
-| CSV / TSV | Parses to markdown table via [papaparse](https://www.npmjs.com/package/papaparse) |
-| HTML | Strips tags, preserves tables via [html-to-text](https://www.npmjs.com/package/html-to-text) |
-| XLSX | Sheets to CSV text via [exceljs](https://www.npmjs.com/package/exceljs) |
-| DOCX | Extracts text via [mammoth](https://www.npmjs.com/package/mammoth) |
-| Email (.eml) | Headers + body via [mailparser](https://www.npmjs.com/package/mailparser) |
-| Plain text | Pass through |
-| Markdown | Pass through |
+| Format        | How it normalizes                                                                            |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| PDF (text)    | Extracts embedded text via [unpdf](https://www.npmjs.com/package/unpdf)                      |
+| PDF (scanned) | Delegates to OCR backend                                                                     |
+| Image         | OCR backend or direct to vision model                                                        |
+| CSV / TSV     | Parses to markdown table via [papaparse](https://www.npmjs.com/package/papaparse)            |
+| HTML          | Strips tags, preserves tables via [html-to-text](https://www.npmjs.com/package/html-to-text) |
+| XLSX          | Sheets to CSV text via [exceljs](https://www.npmjs.com/package/exceljs)                      |
+| DOCX          | Extracts text via [mammoth](https://www.npmjs.com/package/mammoth)                           |
+| Email (.eml)  | Headers + body via [mailparser](https://www.npmjs.com/package/mailparser)                    |
+| Plain text    | Pass through                                                                                 |
+| Markdown      | Pass through                                                                                 |
 
 Format is auto-detected from magic bytes, extension, MIME type, or content sniffing.
 
@@ -133,14 +140,14 @@ Format is auto-detected from magic bytes, extension, MIME type, or content sniff
 
 Pick based on the document's structure:
 
-| Strategy | Use when |
-| --- | --- |
-| `'auto'` | Default. Auto-selects based on content. |
-| `'row'` | Tables, bank statements. Never splits mid-row. Prepends headers. |
-| `'sentence'` | Prose. Splits at sentence boundaries. |
-| `'structural'` | Markdown with headings. Splits at `#` boundaries. |
-| `'page'` | Multi-page PDFs. One chunk per page. |
-| `'sliding'` | Fixed-size windows with overlap. Pair with `'dedupe'` merge. |
+| Strategy       | Use when                                                         |
+| -------------- | ---------------------------------------------------------------- |
+| `'auto'`       | Default. Auto-selects based on content.                          |
+| `'row'`        | Tables, bank statements. Never splits mid-row. Prepends headers. |
+| `'sentence'`   | Prose. Splits at sentence boundaries.                            |
+| `'structural'` | Markdown with headings. Splits at `#` boundaries.                |
+| `'page'`       | Multi-page PDFs. One chunk per page.                             |
+| `'sliding'`    | Fixed-size windows with overlap. Pair with `'dedupe'` merge.     |
 
 ```typescript
 .chunk({ strategy: 'row', maxChars: 8000, contextWindow: 500 })
@@ -150,12 +157,12 @@ Pick based on the document's structure:
 
 When multiple chunks produce results, merge them:
 
-| Strategy | Behavior |
-| --- | --- |
+| Strategy   | Behavior                                                                                          |
+| ---------- | ------------------------------------------------------------------------------------------------- |
 | `'concat'` | Default. Arrays concatenated, scalars first-non-null. In markdown mode, joins with `\n\n---\n\n`. |
-| `'dedupe'` | Concat + deduplicate array items by key. |
-| `'first'` | First chunk only. |
-| Custom fn | `(extractions) => T` for full control. |
+| `'dedupe'` | Concat + deduplicate array items by key.                                                          |
+| `'first'`  | First chunk only.                                                                                 |
+| Custom fn  | `(extractions) => T` for full control.                                                            |
 
 ```typescript
 .merge({ strategy: 'dedupe', dedupeKey: (tx) => `${tx.date}-${tx.amount}` })
@@ -209,8 +216,8 @@ Use any vision-capable model via the AI SDK provider system:
 import { openai } from '@ai-sdk/openai';
 
 openai('gpt-4o');
-openai('glm-ocr', { baseURL: 'http://localhost:8000/v1' });  // self-hosted
-openai('anthropic/claude-4-sonnet', { baseURL: 'https://openrouter.ai/api/v1' });  // OpenRouter
+openai('glm-ocr', { baseURL: 'http://localhost:8000/v1' }); // self-hosted
+openai('anthropic/claude-4-sonnet', { baseURL: 'https://openrouter.ai/api/v1' }); // OpenRouter
 ```
 
 ## Standalone functions
@@ -223,7 +230,9 @@ import { normalize, chunk, extract, merge } from 'munchr';
 const blocks = await normalize({ ocr }).run(fileBuffer, { type: 'pdf' });
 const chunks = chunk(blocks, { strategy: 'sentence', maxChars: 8000 });
 
-for await (const event of extract({ output: 'schema', model, schema, prompt }).stream(imageBuffer)) {
+for await (const event of extract({ output: 'schema', model, schema, prompt }).stream(
+  imageBuffer,
+)) {
   console.log(event);
 }
 
