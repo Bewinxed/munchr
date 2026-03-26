@@ -1,6 +1,6 @@
 {
   "name": "munchr",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Any document + schema in, streamed structured JSON out.",
   "license": "MIT",
   "repository": {
