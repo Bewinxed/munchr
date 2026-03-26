@@ -5,7 +5,7 @@
 <h1 align="center">munchr</h1>
 
 <p align="center">
-  <strong>Any document + schema in, streamed structured JSON out.</strong>
+  <strong>Any document in, structured JSON or clean markdown out.</strong>
 </p>
 
 <p align="center">
@@ -17,227 +17,177 @@
 
 ---
 
-A composable, TypeScript-native document extraction library built on the [Vercel AI SDK](https://ai-sdk.dev). Feed it any file format — PDFs, images, CSVs, HTML, XLSX, emails, plain text — along with a schema and a prompt, and get back progressively-streamed structured data.
-
-## Features
-
-- **10 input formats** — PDF (text + scanned), images, CSV, HTML, XLSX, DOCX, email (.eml), plain text, markdown
-- **Schema-driven** — any [Standard Schema](https://standardschema.dev)-compatible library (Valibot, Zod, ArkType, etc.). TypeScript infers your output type.
-- **Streaming** — partial structured JSON streams in real-time via AI SDK `streamObject()`
-- **Fluent pipeline** — `normalize().chunk().extract().merge()` — lazy, thenable, `for await`-able
-- **Any LLM** — OpenAI, Anthropic, Google, OpenRouter, or self-hosted via vLLM/SGLang/Ollama
-- **End-to-end VLM** — skip OCR entirely, send images straight to vision models
-- **Per-chunk resilience** — one bad chunk doesn't kill a 50-page extraction
-- **6 chunking strategies** — sentence, row, structural, page, sliding, auto
-
-## Install
+munchr is a TypeScript document extraction library built on the [Vercel AI SDK](https://ai-sdk.dev). Feed it a file and a schema, get back streamed structured data. Or skip the schema and get clean markdown instead.
 
 ```bash
-bun add munchr
-# or
 npm install munchr
 ```
 
-## Quick Start
+## Two output modes
 
-### Receipt extraction (OCR + LLM)
+**Schema mode** — structured JSON matching your schema, streamed progressively:
 
 ```typescript
 import { normalize } from 'munchr';
-import { mineruBackend } from 'munchr/backends';
 import { openai } from '@ai-sdk/openai';
 import * as v from 'valibot';
 
-const ReceiptSchema = v.object({
-  vendor: v.string(),
-  date: v.string(),
-  total: v.number(),
-  currency: v.string(),
-  lineItems: v.array(
-    v.object({
-      description: v.string(),
-      amount: v.number(),
-      quantity: v.optional(v.number()),
+const result = await normalize()
+  .extract({
+    output: 'schema',
+    model: openai('gpt-4o-mini'),
+    schema: v.object({
+      vendor: v.string(),
+      total: v.number(),
+      items: v.array(v.object({
+        description: v.string(),
+        amount: v.number(),
+      })),
     }),
-  ),
-});
-
-const receipts = normalize({ ocr: mineruBackend({ url: 'http://localhost:8888' }) }).extract({
-  model: openai('gpt-4o-mini'),
-  schema: ReceiptSchema,
-  prompt: 'Extract all receipt details. Include every line item.',
-});
-
-// Stream partial results
-for await (const event of receipts.stream(pdfBuffer)) {
-  if (event.phase === 'extracting') {
-    renderPartialReceipt(event.extraction);
-  }
-}
-
-// Or just await the final result
-const receipt = await receipts.run(pdfBuffer);
+    prompt: 'Extract the receipt details.',
+  })
+  .run(pdfBuffer);
 ```
 
-### Bank statement (multi-page, chunked, deduplicated)
+**Markdown mode** — LLM-cleaned markdown, no schema needed:
 
 ```typescript
-import { normalize } from 'munchr';
-import * as v from 'valibot';
-
-const TransactionSchema = v.object({
-  transactions: v.array(
-    v.object({
-      date: v.string(),
-      description: v.string(),
-      amount: v.number(),
-      type: v.picklist(['debit', 'credit']),
-      balance: v.optional(v.number()),
-    }),
-  ),
-});
-
-const statements = normalize({ ocr: mineruBackend({ url: 'http://localhost:8888' }) })
-  .chunk({ strategy: 'row', maxChars: 8000, contextWindow: 500 })
+const markdown = await normalize()
   .extract({
+    output: 'markdown',
+    model: openai('gpt-4o-mini'),
+    prompt: 'Convert to clean, well-structured markdown.',
+  })
+  .run(pdfBuffer);
+```
+
+Both modes stream progressively and work with the full pipeline.
+
+## The pipeline
+
+Every extraction is a chain of up to four steps. Each step is optional depending on your use case.
+
+```
+normalize()  →  chunk()  →  extract()  →  merge()
+```
+
+The chain is lazy — nothing runs until you call `.run()` or `.stream()`.
+
+```typescript
+// Full pipeline: OCR → chunk → extract → deduplicate
+const pipeline = normalize({ ocr: mineruBackend({ url: 'http://localhost:8888' }) })
+  .chunk({ strategy: 'row', maxChars: 8000 })
+  .extract({
+    output: 'schema',
     model: openai('gpt-4o'),
     schema: TransactionSchema,
-    prompt: 'Extract all bank transactions from this statement section.',
+    prompt: 'Extract all transactions.',
     concurrency: 3,
-    onChunkError: 'skip',
   })
-  .merge({
-    strategy: 'dedupe',
-    dedupeKey: (tx) => `${tx.date}-${tx.amount}-${tx.description}`,
-  });
+  .merge({ strategy: 'dedupe', dedupeKey: (tx) => `${tx.date}-${tx.amount}` });
 
-const result = await statements.run(pdfBuffer);
-console.log(`Extracted ${result.transactions.length} transactions`);
+const result = await pipeline.run(bankStatementPdf);
 ```
 
-### End-to-end VLM (no separate OCR)
+Pipelines are reusable — define once, run on many files:
 
 ```typescript
-import { extract } from 'munchr';
-import { openai } from '@ai-sdk/openai';
-
-// vLLM serving GLM-OCR locally
-const glmOcr = openai('glm-ocr', {
-  baseURL: 'http://localhost:8000/v1',
-});
-
-const invoices = extract({
-  visionModel: glmOcr,
-  schema: InvoiceSchema,
-  prompt: 'Extract invoice details from this document.',
-});
-
-for await (const event of invoices.stream(imageBuffer, { type: 'image' })) {
-  if (event.phase === 'extracting') {
-    console.log(event.extraction); // progressively fills in
-  }
-}
+const receipt1 = await pipeline.run(pdf1);
+const receipt2 = await pipeline.run(pdf2);
 ```
 
-### CSV (no OCR, no chunking)
+## Streaming
+
+Use `.stream()` instead of `.run()` to get events as they happen:
 
 ```typescript
-const csvClassifier = normalize({ type: 'csv' }).extract({
-  model: openai('gpt-4o-mini'),
-  schema: v.object({
-    transactions: v.array(
-      v.object({
-        original: v.string(),
-        vendor: v.string(),
-        category: v.string(),
-        amount: v.number(),
-      }),
-    ),
-  }),
-  prompt: 'For each row, identify the vendor name and assign a spending category.',
-});
-
-const result = await csvClassifier.run(csvString, { type: 'csv' });
-```
-
-## Pipeline API
-
-Every step returns a builder with the valid next steps as methods. The chain is lazy — nothing executes until you `.run()`, `.stream()`, or `await` it.
-
-```
-normalize(config?)        → Normalized    — has .chunk(), .extract()
-  .chunk(config?)         → Chunked       — has .extract()
-    .extract(config)      → Extracted<T>  — has .merge(), .run(), .stream()
-      .merge(config?)     → Merged<T>     — has .run(), .stream()
-
-extract(config)           → Extracted<T>  — entry point for VLM mode
-```
-
-### Execution
-
-```typescript
-// Option A: .run() for final result
-const result = await pipeline.run(pdfBuffer);
-const result = await pipeline.run(pdfBuffer, { type: 'pdf', filename: 'invoice.pdf' });
-
-// Option B: .stream() for events
 for await (const event of pipeline.stream(pdfBuffer)) {
   switch (event.phase) {
-    case 'normalizing': // TextBlock emitted
-    case 'chunking': // Chunk emitted
-    case 'extracting': // Partial<T> streaming
-    case 'merging': // Final T
-    case 'error': // Per-chunk error
+    case 'normalizing': /* TextBlock emitted */     break;
+    case 'chunking':    /* Chunk emitted */          break;
+    case 'extracting':  /* Partial<T> streaming */   break;
+    case 'merging':     /* Final result */           break;
+    case 'error':       /* Per-chunk error */        break;
   }
 }
 ```
 
-### Reusable pipelines
+## Supported formats
 
-Chains are immutable descriptions — store and reuse them:
+| Format | How it normalizes |
+| --- | --- |
+| PDF (text) | Extracts embedded text via [unpdf](https://www.npmjs.com/package/unpdf) |
+| PDF (scanned) | Delegates to OCR backend |
+| Image | OCR backend or direct to vision model |
+| CSV / TSV | Parses to markdown table via [papaparse](https://www.npmjs.com/package/papaparse) |
+| HTML | Strips tags, preserves tables via [html-to-text](https://www.npmjs.com/package/html-to-text) |
+| XLSX | Sheets to CSV text via [exceljs](https://www.npmjs.com/package/exceljs) |
+| DOCX | Extracts text via [mammoth](https://www.npmjs.com/package/mammoth) |
+| Email (.eml) | Headers + body via [mailparser](https://www.npmjs.com/package/mailparser) |
+| Plain text | Pass through |
+| Markdown | Pass through |
+
+Format is auto-detected from magic bytes, extension, MIME type, or content sniffing.
+
+## Chunking strategies
+
+Pick based on the document's structure:
+
+| Strategy | Use when |
+| --- | --- |
+| `'auto'` | Default. Auto-selects based on content. |
+| `'row'` | Tables, bank statements. Never splits mid-row. Prepends headers. |
+| `'sentence'` | Prose. Splits at sentence boundaries. |
+| `'structural'` | Markdown with headings. Splits at `#` boundaries. |
+| `'page'` | Multi-page PDFs. One chunk per page. |
+| `'sliding'` | Fixed-size windows with overlap. Pair with `'dedupe'` merge. |
 
 ```typescript
-const receiptPipeline = normalize({ ocr }).extract({ model, schema: ReceiptSchema, prompt: '...' });
-
-const receipt1 = await receiptPipeline.run(pdf1);
-const receipt2 = await receiptPipeline.run(pdf2);
+.chunk({ strategy: 'row', maxChars: 8000, contextWindow: 500 })
 ```
 
-## Chunking Strategies
+## Merge strategies
 
-| Strategy       | When to use                                                                     |
-| -------------- | ------------------------------------------------------------------------------- |
-| `'auto'`       | Default. Auto-detects based on content.                                         |
-| `'sentence'`   | Prose documents. Splits at sentence boundaries with abbreviation filtering.     |
-| `'row'`        | Tables / bank statements. Never splits mid-row. Prepends headers to each chunk. |
-| `'structural'` | Markdown with headings. Splits at `#` boundaries.                               |
-| `'page'`       | Multi-page PDFs. One chunk per page.                                            |
-| `'sliding'`    | Fixed-size windows with overlap. Use with `dedupe` merge.                       |
-| `'none'`       | No splitting. Document fits in context.                                         |
+When multiple chunks produce results, merge them:
 
-```typescript
-.chunk({ strategy: 'sentence', maxChars: 8000, contextWindow: 500 })
-.chunk({ strategy: 'row', maxChars: 8000 })
-.chunk({ strategy: 'sliding', maxChars: 4000, overlap: 200 })
-.chunk({ strategy: (blocks) => myCustomChunker(blocks) })
-```
-
-## Merge Strategies
-
-| Strategy                    | Behavior                                                                 |
-| --------------------------- | ------------------------------------------------------------------------ |
-| `'concat'`                  | Arrays concatenated, scalars first-non-null, objects recursive. Default. |
-| `'first'`                   | First chunk's extraction only.                                           |
-| `'dedupe'`                  | Concat + deduplicate array items by key.                                 |
-| Custom `(extractions) => T` | Full control.                                                            |
+| Strategy | Behavior |
+| --- | --- |
+| `'concat'` | Default. Arrays concatenated, scalars first-non-null. In markdown mode, joins with `\n\n---\n\n`. |
+| `'dedupe'` | Concat + deduplicate array items by key. |
+| `'first'` | First chunk only. |
+| Custom fn | `(extractions) => T` for full control. |
 
 ```typescript
 .merge({ strategy: 'dedupe', dedupeKey: (tx) => `${tx.date}-${tx.amount}` })
 ```
 
-## OCR Backends
+## Vision model mode (no OCR)
 
-### MinerU (self-hosted Docker)
+For single-page visual documents, skip OCR and send the image directly to a vision model:
+
+```typescript
+import { extract } from 'munchr';
+
+// Structured JSON from an image
+const data = await extract({
+  output: 'schema',
+  visionModel: openai('gpt-4o'),
+  schema: InvoiceSchema,
+  prompt: 'Extract invoice details.',
+}).run(imageBuffer, { type: 'image' });
+
+// Markdown from an image
+const md = await extract({
+  output: 'markdown',
+  model: openai('gpt-4o'),
+  visionModel: openai('gpt-4o'),
+  prompt: 'Convert this document to markdown.',
+}).run(imageBuffer, { type: 'image' });
+```
+
+## OCR backends
+
+### MinerU (self-hosted)
 
 ```typescript
 import { mineruBackend } from 'munchr/backends';
@@ -247,101 +197,68 @@ const ocr = mineruBackend({
   tableEnable: true,
   formulaEnable: true,
 });
+
+normalize({ ocr }).extract({ ... })
 ```
 
-### Vision LLMs (no separate OCR)
+### Any AI SDK provider
 
-Use the AI SDK provider system directly — no backend wrapper needed:
+Use any vision-capable model via the AI SDK provider system:
 
 ```typescript
 import { openai } from '@ai-sdk/openai';
 
-// Cloud
-const model = openai('gpt-4o');
-
-// Self-hosted via vLLM
-const localVlm = openai('glm-ocr', { baseURL: 'http://localhost:8000/v1' });
-
-// OpenRouter
-const openRouter = openai('anthropic/claude-4-sonnet', {
-  baseURL: 'https://openrouter.ai/api/v1',
-});
+openai('gpt-4o');
+openai('glm-ocr', { baseURL: 'http://localhost:8000/v1' });  // self-hosted
+openai('anthropic/claude-4-sonnet', { baseURL: 'https://openrouter.ai/api/v1' });  // OpenRouter
 ```
 
-## Standalone Usage
+## Standalone functions
 
-Every function works independently — the same ones used internally by the chain:
+Every pipeline step also works independently:
 
 ```typescript
 import { normalize, chunk, extract, merge } from 'munchr';
 
-// Normalize any file to text
 const blocks = await normalize({ ocr }).run(fileBuffer, { type: 'pdf' });
-
-// Chunk text blocks (sync)
 const chunks = chunk(blocks, { strategy: 'sentence', maxChars: 8000 });
 
-// Stream extraction from chunks
-for await (const event of extract({ model, schema, prompt }).stream(imageBuffer)) {
+for await (const event of extract({ output: 'schema', model, schema, prompt }).stream(imageBuffer)) {
   console.log(event);
 }
 
-// Merge extractions (sync)
 const result = merge(extractions, { strategy: 'concat' });
 ```
 
-## Supported Formats
+## Error handling
 
-| Format        | How it normalizes           | Library                                                    |
-| ------------- | --------------------------- | ---------------------------------------------------------- |
-| Plain text    | Pass through                | None                                                       |
-| Markdown      | Pass through                | None                                                       |
-| CSV / TSV     | Parse + markdown table      | [papaparse](https://www.npmjs.com/package/papaparse)       |
-| HTML          | Strip tags, preserve tables | [html-to-text](https://www.npmjs.com/package/html-to-text) |
-| XLSX          | Sheets → CSV text           | [exceljs](https://www.npmjs.com/package/exceljs)           |
-| DOCX          | Extract text                | [mammoth](https://www.npmjs.com/package/mammoth)           |
-| Email (.eml)  | Headers + body              | [mailparser](https://www.npmjs.com/package/mailparser)     |
-| PDF (text)    | Extract embedded text       | [unpdf](https://www.npmjs.com/package/unpdf)               |
-| PDF (scanned) | Delegate to OCR backend     | Configured `OcrBackend`                                    |
-| Image         | Delegate to OCR or VLM      | Configured `OcrBackend` or `visionModel`                   |
-
-Format is auto-detected from magic bytes, file extension, MIME type, or content sniffing.
-
-## Error Handling
+One bad chunk doesn't kill the pipeline. By default, errors are skipped:
 
 ```typescript
-import { MunchrError, NormalizeError, ExtractionError } from 'munchr';
-
-// Per-chunk resilience (default: onChunkError: 'skip')
-// One bad chunk emits an error event but doesn't stop the pipeline.
-
 for await (const event of pipeline.stream(input)) {
   if (event.phase === 'error') {
     console.warn(`Chunk ${event.chunk?.index} failed:`, event.error.message);
   }
 }
 
-// Or throw on any chunk error
+// Or throw on any error
 .extract({ ..., onChunkError: 'throw' })
 
 // Or handle per-chunk
 .extract({ ..., onChunkError: (err, chunk) => log(err, chunk.index) })
 ```
 
-## Architecture
+## Schemas
 
-```
-                    +-- PDF (scanned) ---> [OCR backend] --> markdown --+
-                    |-- PDF (text) ------> [unpdf] --> text -----------+
-                    |-- Image -----------> [VLM end-to-end] ---------->|---> streamed JSON
-Input --> detect -> |-- CSV -------------> [papaparse] --> md table ---+          ^
-                    |-- HTML ------------> [html-to-text] --> text ----+          |
-                    |-- XLSX ------------> [exceljs] --> CSV text -----+    [AI SDK
-                    |-- DOCX ------------> [mammoth] --> text ---------+     streamObject()
-                    |-- Email (.eml) ----> [mailparser] --> text ------+     + schema]
-                    +-- Plain/Markdown --> pass through ---------------+
-                                  |                              |
-                            normalize()                     chunk() --> extract() --> merge()
+Any [Standard Schema](https://standardschema.dev)-compatible library works — Valibot, Zod, ArkType. TypeScript infers the output type from your schema.
+
+```typescript
+import * as v from 'valibot';
+import { z } from 'zod';
+
+// Either works
+const schema = v.object({ name: v.string(), amount: v.number() });
+const schema = z.object({ name: z.string(), amount: z.number() });
 ```
 
 ## License

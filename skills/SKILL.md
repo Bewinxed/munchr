@@ -6,79 +6,65 @@ description: |
 
 # munchr
 
-munchr turns any document into typed structured data or clean markdown through a fluent pipeline. The key design insight: every document extraction problem is a sequence of **normalize → chunk → extract → merge**, and the user only configures the steps relevant to their use case.
+munchr turns any document into typed structured data or clean markdown through a fluent pipeline: **normalize → chunk → extract → merge**. The user only configures the steps they need.
 
 ## Output modes
 
-munchr supports two output modes via the `extract()` step, controlled by the `output` discriminant:
+The `extract()` step has two modes, controlled by the `output` discriminant:
 
-- **`output: 'schema'`** — Structured JSON extraction. Requires a schema (Valibot, Zod, ArkType). Uses AI SDK `streamObject()`. Returns typed `T`.
-- **`output: 'markdown'`** — LLM-enhanced markdown conversion. No schema needed. Uses AI SDK `streamText()`. Returns `string`.
+- **`output: 'schema'`** — Structured JSON. Requires a schema (Valibot, Zod, ArkType). Uses AI SDK `streamObject()`. Returns typed `T`.
+- **`output: 'markdown'`** — Clean markdown. No schema needed. Uses AI SDK `streamText()`. Returns `string`.
 
-Both modes stream progressively and work with the full pipeline (normalize → chunk → extract → merge).
+Both stream progressively and work with the full pipeline.
 
-## How to think about a user's extraction problem
-
-When a user comes to you with a document extraction task, work through these questions in order. Each answer narrows the pipeline design.
+## Deciding what the user needs
 
 ### 1. What's the input?
 
-This determines whether you need OCR and which path to take.
+**Text-extractable** (CSV, HTML, XLSX, DOCX, email, text, markdown, text-based PDF): Use `normalize()`. No OCR needed. Format detection is automatic.
 
-**Text-extractable formats** (CSV, HTML, XLSX, DOCX, email, plain text, markdown, text-based PDF): Start with `normalize()`. No OCR needed — munchr has built-in parsers for all of these. Format detection is automatic from magic bytes, extension, MIME type, or content sniffing, so the user rarely needs to specify the type.
+**Scanned PDFs or images** — two choices:
+- **Pipeline mode** — `normalize({ ocr: mineruBackend(...) })` — OCR first, then LLM extracts from text. Use for multi-page documents or when chunking is needed.
+- **VLM mode** — `extract({ visionModel })` — Image goes straight to a vision model. Simpler, but the whole document must fit in one call. Best for single-page docs (receipts, ID cards, single invoices).
 
-**Scanned PDFs or images**: Two choices, and this is an important design decision:
-- **Pipeline mode** — `normalize({ ocr: mineruBackend(...) })` — OCR produces text first, then the LLM extracts structure from text. Better when you need chunking (long documents) or when the OCR model is separate from the extraction model.
-- **VLM mode** — `extract({ visionModel })` — Image goes directly to a vision-capable LLM with the schema. Simpler, fewer moving parts, but the entire document must fit in one LLM call. Best for single-page documents or when using large-context vision models.
+### 2. What output?
 
-Guide the user toward VLM mode for single-page visual documents (receipts, single invoices, ID cards) and pipeline mode for multi-page scanned documents (bank statements, contracts).
+**Structured data** → `output: 'schema'`. User provides a schema. Primary use case for data extraction, form parsing, invoices.
 
-### 2. What output does the user need?
+**Clean markdown** → `output: 'markdown'`. No schema. LLM converts/cleans the text into markdown. Use for document conversion, content migration, OCR cleanup.
 
-**Structured data** (JSON matching a schema) → `output: 'schema'`. The user must provide a schema. This is the primary use case for data extraction, form parsing, invoice processing, etc.
+### 3. Does it need chunking?
 
-**Clean markdown** → `output: 'markdown'`. No schema needed. The LLM converts/cleans the normalized text into well-structured markdown. Use for document conversion, content migration, OCR cleanup, or when the user wants readable text output rather than structured fields.
+If the text exceeds ~8K chars, chunk it:
 
-### 3. Does the text exceed the LLM's effective context?
+- **Tables / rows** → `'row'` — never splits mid-row, prepends headers to each chunk
+- **Prose** → `'sentence'` — splits at sentence boundaries, handles abbreviations
+- **Markdown with sections** → `'structural'` — splits at heading boundaries
+- **Sliding window** → `'sliding'` — overlapping. Always pair with `'dedupe'` merge
 
-If yes, the user needs chunking. Pick the strategy based on the document's structure, not its format:
+If it fits in context, skip `.chunk()`.
 
-- **Tables or row-oriented data** → `'row'` — This is critical for financial documents. Row chunking never splits a table row across chunks and prepends the header row to each chunk so the LLM always knows which column is which.
-- **Prose with paragraphs** → `'sentence'` — Splits at sentence boundaries. The tokenizer handles abbreviations (Mr., Dr., Inc.) so it won't break at false periods. Context window carries the tail of the previous chunk for coreference resolution.
-- **Markdown with clear sections** → `'structural'` — Splits at heading boundaries. Falls back to sentence splitting for sections that are too large.
-- **Sliding window** → `'sliding'` — When you need overlapping context. Always pair with `'dedupe'` merge strategy to handle the duplicate extractions from the overlap regions.
+### 4. Schema design (schema mode only)
 
-If the document fits in context, skip `.chunk()` entirely.
+- Use whichever Standard Schema library the user prefers. Default to Valibot if they haven't chosen.
+- Use `v.optional()` for fields that may not appear in every chunk
+- Put arrays inside the schema object (not as the top-level schema)
+- Keep schemas flat — deeply nested schemas are harder for LLMs
 
-### 4. What does the output schema look like? (schema mode only)
+### 5. Merging
 
-Help the user design a schema that reflects how data actually appears in the document. The schema is both the extraction target AND the validation gate — if the LLM output doesn't match, that chunk's extraction is discarded.
+**Schema mode:**
+- `'concat'` (default) — concatenates arrays, first-non-null for scalars
+- `'dedupe'` — concat + deduplicate by key. Use with sliding window chunks.
+- Custom function for full control
 
-Use whichever Standard Schema library the user prefers (Valibot, Zod, ArkType). When the user hasn't chosen, default to Valibot — it's the lightest and tree-shakes best.
+**Markdown mode:**
+- `'concat'` (default) — joins chunks with `\n\n---\n\n`
+- `'first'` — first chunk only
 
-Key schema design principles:
-- Use `v.optional()` / `z.optional()` for fields that might not appear in every chunk
-- For array extraction (transactions, line items, entities), the array goes inside the schema object — don't make the top-level schema an array
-- Keep schemas flat when possible — deeply nested schemas are harder for LLMs to populate correctly
+## Pipeline examples
 
-### 5. Do multiple chunks produce results that need combining?
-
-If yes, the user needs `.merge()`. The strategy depends on the output mode and schema shape:
-
-**For schema mode:**
-- **Array data** (transactions, line items, entities) → `'concat'` or `'dedupe'`. Concat is the default — it appends arrays from each chunk. If chunks overlap (sliding window) or multi-pass is used, use `'dedupe'` with a key function that uniquely identifies each item.
-- **Scalar data** (single vendor name, total amount) → `'concat'` works — it uses the first non-null value for scalars.
-- **Complex merging logic** → pass a custom function: `.merge({ strategy: (extractions) => myMerge(extractions) })`
-
-**For markdown mode:**
-- The default `'concat'` strategy joins markdown strings with `\n\n---\n\n` separators between chunks.
-- `'first'` returns only the first chunk's markdown.
-
-## Constructing pipelines
-
-Always construct the pipeline as a reusable chain, then call `.run()` or `.stream()` on it:
-
-### Schema mode (structured JSON)
+### Schema mode — structured extraction
 
 ```typescript
 import { normalize } from 'munchr';
@@ -113,13 +99,13 @@ const pipeline = normalize({ ocr: mineruBackend({ url: 'http://localhost:8888' }
 const result = await pipeline.run(pdfBuffer);
 ```
 
-### Markdown mode (document conversion)
+### Markdown mode — document conversion
 
 ```typescript
 import { normalize } from 'munchr';
 import { openai } from '@ai-sdk/openai';
 
-// Single-page document
+// Single document
 const md = await normalize({ ocr })
   .extract({
     output: 'markdown',
@@ -138,18 +124,21 @@ const md = await normalize({ ocr })
   })
   .merge({ strategy: 'concat' })
   .run(largePdf);
+```
 
-// Streaming markdown
+### Streaming markdown
+
+```typescript
 for await (const event of normalize({ ocr })
   .extract({ output: 'markdown', model, prompt: 'Convert to markdown.' })
   .stream(pdfBuffer)) {
   if (event.phase === 'extracting') {
-    process.stdout.write(event.extraction);
+    process.stdout.write(event.extraction); // progressive markdown string
   }
 }
 ```
 
-### VLM mode (vision model, both output modes)
+### VLM mode — both output modes
 
 ```typescript
 import { extract } from 'munchr';
@@ -172,24 +161,40 @@ const md = await extract({
 }).run(imageBuffer, { type: 'image' });
 ```
 
+### Simple cases (no OCR, no chunking)
+
+```typescript
+// CSV classification
+const result = await normalize({ type: 'csv' }).extract({
+  output: 'schema',
+  model: openai('gpt-4o-mini'),
+  schema: v.object({
+    transactions: v.array(v.object({
+      vendor: v.string(),
+      category: v.string(),
+      amount: v.number(),
+    })),
+  }),
+  prompt: 'Identify vendor names and assign spending categories.',
+}).run(csvString, { type: 'csv' });
+```
+
 ## What to avoid
 
-- **Don't skip `.chunk()` for long documents hoping the LLM handles it** — LLM extraction quality degrades sharply past 8-10K chars of source text, even if the context window is larger. Chunk it.
-- **Don't use VLM mode for multi-page documents** — unless the model supports very large visual inputs. Use pipeline mode with OCR instead.
-- **Don't make the extraction prompt too vague** — "extract data" is worse than "extract all bank transactions including date, description, debit/credit amount, and running balance." Specificity drives extraction quality.
-- **Don't set `onChunkError: 'throw'` for production pipelines** — one malformed table on page 37 shouldn't kill a 50-page extraction. Use `'skip'` (default) and handle error events.
-- **Don't use `output: 'schema'` when the user just wants markdown** — it's slower and requires a schema. Use `output: 'markdown'` instead.
+- **Don't skip chunking for long documents** — extraction quality drops past ~8K chars even with large context windows
+- **Don't use VLM for multi-page documents** — use pipeline mode with OCR instead
+- **Don't write vague prompts** — "extract data" is worse than "extract all transactions with date, description, and amount"
+- **Don't use `onChunkError: 'throw'` in production** — one bad chunk shouldn't kill a 50-page run
+- **Don't use `output: 'schema'` when the user just wants markdown** — it's slower and needs a schema
 
 ## Source code reference
 
-The library source is in `src/`. Read these files for implementation details:
-- `src/core/types.ts` — all TypeScript interfaces and config types (ExtractSchemaConfig, ExtractMarkdownConfig)
-- `src/chain.ts` — the fluent builder classes (Normalized, Chunked, Extracted, Merged)
-- `src/core/errors.ts` — error class hierarchy
+- `src/core/types.ts` — all TypeScript interfaces (ExtractSchemaConfig, ExtractMarkdownConfig, OutputMode)
+- `src/chain.ts` — fluent builder classes (Normalized, Chunked, Extracted, Merged)
 - `src/steps/extract.ts` — extraction step (branches on output mode: streamObject vs streamText)
-- `src/steps/` — step factory functions (normalize, chunk, extract, merge)
+- `src/steps/` — step factory functions
 - `src/chunking/` — chunking strategy implementations
 - `src/backends/mineru.ts` — MinerU OCR backend
-- `src/normalize/detect.ts` — format auto-detection logic
+- `src/normalize/detect.ts` — format auto-detection
 
-For the full API type reference, read `references/api-reference.md`.
+For the full type reference, see `references/api-reference.md`.
